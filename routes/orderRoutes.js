@@ -3,6 +3,7 @@ const router = express.Router();
 const Order = require('../models/Order');
 const Customer = require('../models/Customer');
 const { protect } = require('../middleware/authMiddleware');
+const sendSMS = require('../utils/sendSMS');
 
 // Generate unique order ID
 const generateOrderId = async () => {
@@ -29,7 +30,11 @@ router.post('/', protect, async (req, res) => {
     });
 
     // Update customer total orders count
-    await Customer.findByIdAndUpdate(customerId, { $inc: { totalOrders: 1 } });
+    const cust = await Customer.findByIdAndUpdate(customerId, { $inc: { totalOrders: 1 } });
+
+    // 03 - Send (Twilio SMS Hook)
+    const smsBody = `Hello ${cust.name}, your dry cleaning order ${orderId} has been received. Total: ₹${totalAmount}. Thank you for choosing LaundryFlow!`;
+    sendSMS(cust.phone, smsBody);
 
     res.status(201).json(order);
   } catch (error) {
@@ -74,7 +79,12 @@ router.put('/:id/status', protect, async (req, res) => {
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ message: 'Invalid status' });
     }
-    const order = await Order.findByIdAndUpdate(req.params.id, { status }, { new: true });
+    const order = await Order.findByIdAndUpdate(req.params.id, { status }, { new: true }).populate('customer');
+    
+    if (status === 'Ready' && order.customer?.phone) {
+       sendSMS(order.customer.phone, `Your order ${order.orderId} is ready for pickup! Total Due: ₹${order.totalAmount}. - LaundryFlow`);
+    }
+
     res.json(order);
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
